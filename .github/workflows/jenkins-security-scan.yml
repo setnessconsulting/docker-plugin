@@ -16,8 +16,31 @@ permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  source-guard:
+    name: Guard PR source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: none
+      pull-requests: none
+    steps:
+      - name: Reject fork pull requests before scanner execution
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error::Fork pull request verification is not enabled for this repository."
+          exit 1
+
   security-scan:
+    needs: [source-guard]
+    if: needs.source-guard.result == 'success'
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
     uses: jenkins-infra/jenkins-security-scan/.github/workflows/jenkins-security-scan.yaml@v2
     with:
       java-cache: 'maven' # Optionally enable use of a build dependency cache. Specify 'maven' or 'gradle' as appropriate.

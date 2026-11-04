@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Reject fork pull requests before checkout
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error::Fork pull request verification is not enabled for this repository."
+          exit 1
+
+      - name: Classify docs-only changes
+        id: changes
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            const docExtension = /\.(?:md|markdown|mdx|rst|adoc)$/i;
+            const docName = /(?:^|\/)(?:readme|license|notice|changelog|contributing|code_of_conduct|security|support)(?:\.(?:md|markdown|mdx|rst|adoc|txt))?$/i;
+            const docsOnly = files.length > 0 && files.length < 3000 &&
+              files.every(({ filename }) => docExtension.test(filename) || docName.test(filename));
+            core.setOutput("docs_only", String(docsOnly));
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.changes.outputs.docs_only != 'true'
+      - uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v6.1.0
+        if: steps.changes.outputs.docs_only != 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run the Maven test suite
+        if: steps.changes.outputs.docs_only != 'true'
+        run: mvn -B -ntp test
